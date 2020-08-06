@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "1.0.0",
+  "info": {
+    "title": "Base64",
+    "id": {
+      "group": null,
+      "name": "base64",
+      "version": "2.0.0"
+    },
+    "author": [
+      {
+        "name": "malvidin",
+        "email": null,
+        "company": null
+      }
+    ],
+    "releaseDate": null,
+    "description": "The base64 custom search command is a command that does Base64 encoding and decoding. Includes a MIME decoding command for base64 (B) data.",
+    "classification": {
+      "intendedAudience": "Security Specialists",
+      "categories": ["IT Operations", "Utilities"],
+      "developmentStatus": "Production/Stable"
+    },
+    "commonInformationModels": null,
+    "license": {
+      "name": "GPL 3.0",
+      "text": "./LICENSE",
+      "uri": "https://www.gnu.org/licenses/gpl-3.0.en.html"
+    },
+    "releaseNotes": {
+      "name": null,
+      "text": "./README.md",
+      "uri": null
+    }
+  },
+  "dependencies": null,
+  "tasks": null
+}
