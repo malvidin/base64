@@ -32,6 +32,20 @@ def decode_mime(encoded_field, unescape_folding=True):
     return encoded_field
 
 
+class OutputModes(validators.Validator):
+    """Validate modes for output location"""
+    def __call__(self, value):
+        if value is None:
+            return None
+        valid_modes = ('replace', 'append')
+        if value.lower() not in valid_modes:
+            raise ValueError('Mode option must be {}'.format(' or '.join(valid_modes)))
+        return value.lower()
+
+    def format(self, value):
+        return None if value is None else value.lower()
+
+
 @Configuration()
 class MIMECommand(StreamingCommand):
     """
@@ -44,7 +58,7 @@ class MIMECommand(StreamingCommand):
      """
 
     field = Option(name='field', require=True)
-    mode = Option(name='mode', require=False, default='replace')
+    mode = Option(name='mode', require=False, default='replace', validate=OutputModes())
     suppress_error = Option(name='suppress_error', require=False, default=False, validate=validators.Boolean())
 
     def stream(self, records):
@@ -61,7 +75,10 @@ class MIMECommand(StreamingCommand):
                 continue
 
             try:
-                record[dest_field] = decode_mime(record[self.field])
+                decoded = decode_mime(record[self.field])
+                if '\x00' in decoded:
+                    decoded = decoded.replace('\x00', '\\x00')
+                record[dest_field] = decoded
 
             except Exception as e:
                 if not self.suppress_error:

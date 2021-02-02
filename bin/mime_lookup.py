@@ -16,7 +16,7 @@ from mime_command import decode_mime
 def process_line(input_dict, encoded, decoded):
     try:
         if input_dict[encoded] and not input_dict[decoded]:
-            input_dict[decoded] = decode_mime(input_dict[encoded])
+            input_dict[decoded] = decode_mime(input_dict[encoded]).replace('\x00', '\\x00')
     except:
         pass
 

@@ -7,7 +7,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
-from splunklib.six import text_type
+from splunklib.six import text_type, ensure_text
 from splunklib.searchcommands.internals import CsvDialect
 
 from base64_command import from_b64, to_b64, backslash_escape
@@ -18,7 +18,8 @@ def process_line(input_dict, encoded, decoded):
         if input_dict[encoded] and not input_dict[decoded]:
             input_dict[decoded] = backslash_escape(from_b64(input_dict[encoded]))
         elif input_dict[decoded] and not input_dict[encoded]:
-            input_dict[encoded] = to_b64(input_dict[decoded])
+            data = input_dict[decoded].encode('utf8').decode('unicode_escape').encode('latin1')
+            input_dict[encoded] = ensure_text(to_b64(data))
     except:
         pass
 
