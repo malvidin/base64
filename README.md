@@ -88,6 +88,7 @@ https://github.com/malvidin/base64
 - Escape null bytes from results
 
 **v2.0**
+- Forked from Cédric le Roux's Base64 app (1922) with permission 
 - Avoid errors by adding padding
 - Less ambiguous escaped output
 - Optional charset when decoding
