@@ -82,6 +82,11 @@ https://github.com/malvidin/base64
 
 ### History
 
+**v2.0.1**
+- Cleaner output
+- Better option validation
+- Escape null bytes from results
+
 **v2.0**
 - Avoid errors by adding padding
 - Less ambiguous escaped output
