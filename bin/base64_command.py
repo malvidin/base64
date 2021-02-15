@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import re
 import sys
 from base64 import b64decode, b64encode
 
@@ -19,42 +20,55 @@ else:
     PaddingError = TypeError
 
 BASE64_CHARS = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
+BASE64_RE_PRINTABLE = re.compile(
+    b'''^
+        ([ACDI-Za-f][0-3AC-HQS-Xgi-nwyz][014589ABEFIJMNQRUVYZcdghklopstwx][0-9A-Za-z+/])+
+        ([ACDI-Za-f][0-3AC-HQS-Xgi-nwyz][014589ABEFIJMNQRUVYZcdghklopstwx=]?[0-9A-Za-z+/=]?)
+        $''',
+    re.VERBOSE
+)
 
 
-def from_b64(input_bytes, custom_alphabet=None, padding=b'='):
+def from_b64(input_bytes, custom_alphabet=BASE64_CHARS, recurse=False):
     """
     Base64 decodes input, optionally with a custom base64 alphabet.
 
     :param input_bytes: Input to base64 encode
     :param custom_alphabet: Optional base64 alphabet
-    :param padding: Optional base64 padding character when using a custom alphabet
+    :param recurse: Attempt recursive decoding
     :return: Base64 decoded data
     """
     if not isinstance(input_bytes, bytes):
-        input_bytes = input_bytes.encode('utf-8', errors='backslashreplace')
-    if custom_alphabet is not None:
-        input_bytes = input_bytes.translate(maketrans(custom_alphabet + padding, BASE64_CHARS))
+        input_bytes = input_bytes.encode('ascii', errors='ignore')
+    if custom_alphabet != BASE64_CHARS:
+        input_bytes = input_bytes.translate(maketrans(custom_alphabet, BASE64_CHARS))
     try:
         decoded_value = b64decode(input_bytes + b'====')
     except PaddingError:
         decoded_value = b64decode(input_bytes + b'A====')
+    if recurse:
+        if BASE64_RE_PRINTABLE.match(decoded_value.replace(b'\x00', b'')):
+            decoded_value = from_b64(
+                decoded_value,
+                custom_alphabet=custom_alphabet,
+                recurse=recurse
+            )
     return decoded_value
 
 
-def to_b64(input_bytes, custom_alphabet=None, padding=b'='):
+def to_b64(input_bytes, custom_alphabet=BASE64_CHARS):
     """
     Base64 encodes input, optionally with a custom base64 alphabet.
 
     :param input_bytes: Input to base64 encode
     :param custom_alphabet: Optional base64 alphabet
-    :param padding: Optional base64 padding character when using a custom alphabet
     :return: Base64 encoded data
     """
     if not isinstance(input_bytes, bytes):
         input_bytes = input_bytes.encode('utf-8', errors='backslashreplace')
     encoded_value = b64encode(input_bytes)
-    if custom_alphabet is not None:
-        encoded_value = encoded_value.translate(maketrans(BASE64_CHARS, custom_alphabet + padding))
+    if custom_alphabet != BASE64_CHARS:
+        encoded_value = encoded_value.translate(maketrans(BASE64_CHARS, custom_alphabet))
     return encoded_value
 
 
@@ -80,16 +94,24 @@ def backslash_escape(input_bytes):
 class Base64Alphabet(validators.Validator):
     """Validate Base64 alphabets"""
     def __call__(self, value):
-        if value is None:
-            return None
+        if not value:
+            return BASE64_CHARS
         if not isinstance(value, bytes):
-            encoded_value = value.encode('utf-8', errors='backslashreplace')
-            alphabet_len = len(encoded_value)
+            value = value.encode('ascii')
+        alphabet_len = len(value)
+        # Accept altchars, like "-_" for URL safe encoding. Third optional character is alternate padding
+        if alphabet_len in (2, 3):
+            if alphabet_len == 2:
+                value += BASE64_CHARS[-1:]
+            if any(c in BASE64_CHARS[:62] for c in value):
+                raise ValueError('Alternate chars must not be in the normal base64 alphabet')
+            return BASE64_CHARS.translate(maketrans(BASE64_CHARS[-3:], value))
+        elif alphabet_len in (64, 65):
+            if alphabet_len == 64:
+                value += BASE64_CHARS[-1:]
+            return value
         else:
-            alphabet_len = len(value)
-        if alphabet_len not in (64, 65):
-            raise ValueError('Require 64 characters in alphabet (or 65 with padding), not {}'.format(alphabet_len))
-        return value
+            raise ValueError('Require 64 characters in alphabet (or 65 with padding), not {!s}'.format(alphabet_len))
 
     def format(self, value):
         return None if value is None else value
@@ -118,7 +140,7 @@ class OutputEncoding(validators.Validator):
         try:
             codecs.lookup(value)
         except LookupError as err:
-            raise ValueError('Codec for "{}" not found'.format(value.lower()))
+            raise ValueError('Codec "{}" not found'.format(value.lower()))
         return value.lower()
 
     def format(self, value):
@@ -151,40 +173,13 @@ class B64Command(StreamingCommand):
     field = Option(name='field', require=True, default=None)
     action = Option(name='action', require=False, default='decode', validate=Base64Actions())
     mode = Option(name='mode', require=False, default='replace', validate=OutputModes())
-    alphabet = Option(name='alphabet', require=False, default=None, validate=Base64Alphabet())
+    alphabet = Option(name='alphabet', require=False, default=BASE64_CHARS, validate=Base64Alphabet())
     backslash_escape = Option(name='backslash_escape', require=False, default=True, validate=validators.Boolean())
     encoding = Option(name='encoding', require=False, default=None, validate=OutputEncoding())
+    recurse = Option(name='recurse', require=False, default=False, validate=validators.Boolean())
     suppress_error = Option(name='suppress_error', require=False, default=False, validate=validators.Boolean())
-    padding = BASE64_CHARS[-1:]
 
     def stream(self, records):
-        # Custom alphabets must be 64 bytes long, or 65 with custom padding
-        if self.alphabet is not None:
-            if not isinstance(self.alphabet, bytes):
-                self.alphabet = self.alphabet.encode('utf-8', errors='backslashreplace')
-            if len(self.alphabet) == 65:
-                self.alphabet, self.padding = self.alphabet[:-1], self.alphabet[-1:]
-            elif len(self.alphabet) != 64:
-                self.alphabet = None
-
-        # Set the function for decoding or encoding the input
-        if self.action == 'decode':
-            fct = from_b64
-        else:
-            fct = to_b64
-            # No implementation to converting to base64 with a specific encoding
-            self.encoding = None
-
-        if self.encoding is not None:
-            import codecs
-            try:
-                # Look up the chosen encoding
-                codecs.lookup(self.encoding)
-                self.backslash_escape = False
-            except LookupError:
-                # fail back to backslash escape of output, should be caught earlier with the validator
-                self.encoding = None
-                self.backslash_escape = True
 
         # Set the output field
         if self.mode == 'append':
@@ -197,31 +192,58 @@ class B64Command(StreamingCommand):
             if self.field not in record:
                 yield record
                 continue
+
             # Process field
-            try:
-                field_data = record[self.field]
-                if self.action == 'encode' and self.backslash_escape is True and '\\' in field_data:
-                    # Convert data that was previously backslash_escaped back to bytes
-                    field_data = field_data.encode('utf8').decode('unicode_escape').encode('latin1')
-                ret = fct(field_data, self.alphabet, self.padding)
+            field_data_list = record[self.field]
+            output_data_list = []
 
-                # Backslash escape decoded data
-                if self.action == 'decode' and self.backslash_escape:
-                    record[dest_field] = backslash_escape(ret)
-                # Use specified encoding
-                elif self.action == 'decode' and self.encoding is not None:
-                    decoded = ret.decode(self.encoding, errors='replace')
-                    # If nulls are found, Splunk may not pass it back to subsequent commands
-                    if '\x00' in decoded:
-                        decoded = backslash_escape(ret.decode('latin1'))
-                    record[dest_field] = decoded
-                else:
-                    # If nulls are found, Splunk may not pass it back to subsequent commands
-                    record[dest_field] = ensure_str(ret).replace('\x00', '\\x00')
+            # Ensure all values are in a list
+            if not isinstance(field_data_list, list):
+                field_data_list = [field_data_list]
 
-            except Exception as e:
-                if not self.suppress_error:
-                    raise e
+            for field_data in field_data_list:
+                try:
+                    # Base64 Encoding
+                    if self.action == 'encode':
+                        # Expected input is UTF-8 read as Unicode.
+                        # To pass other formats, it must be unescaped from backslash_escape
+                        if self.backslash_escape:
+                            field_data = field_data.encode('utf-8', errors='ignore').decode('unicode_escape')
+                        field_data = field_data.encode(self.encoding, errors='ignore')
+                        # Add encoded ASCII data to output
+                        output_data_list.append(ensure_str(
+                            to_b64(field_data, custom_alphabet=self.alphabet)
+                        ))
+
+                    # Base64 Decoding
+                    else:
+                        output_data = from_b64(field_data, custom_alphabet=self.alphabet, recurse=self.recurse)
+                        # Try specified encoding
+                        if self.encoding:
+                            try:
+                                decode_attempt = output_data.decode(self.encoding, errors='strict')
+                                if '\x00' not in decode_attempt:
+                                    output_data_list.append(decode_attempt)
+                                    continue
+                            except UnicodeDecodeError:
+                                pass
+                        # Backlash escape output
+                        # Null values will break the data passed back through stdout
+                        if self.backslash_escape or b'\x00' in output_data:
+                            output_data_list.append(
+                                backslash_escape(output_data)
+                            )
+                        # If encoding was not set, backslash_escape was not set, and no null found
+                        else:
+                            output_data_list.append(
+                                output_data.decode('utf8', errors='replace')
+                            )
+
+                except Exception as e:
+                    if not self.suppress_error:
+                        raise e
+
+                record[dest_field] = output_data_list
 
             yield record
 
