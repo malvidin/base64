@@ -74,8 +74,13 @@ class MIMECommand(StreamingCommand):
                 yield record
                 continue
 
+            field_data = record[self.field]
+            # Does not support multivalued fields, join into one string
+            if isinstance(field_data, list):
+                field_data = ' '.join(field_data)
+
             try:
-                decoded = decode_mime(record[self.field])
+                decoded = decode_mime(field_data)
                 if '\x00' in decoded:
                     decoded = decoded.replace('\x00', '\\x00')
                 record[dest_field] = decoded
